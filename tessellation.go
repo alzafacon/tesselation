@@ -79,14 +79,14 @@ func main() {
 
 	// translations are the rules used to slide the tile and tessellate all around the first tile
 	translations := []pattern.Offset{
-		{Row: -10},
-		{Row: 10},
+		{Row: -10}, // above
+		{Row: 10},  // below
 
-		{Row: -20, Col: 10},
-		{Row: -10, Col: 10},
+		{Row: -20, Col: 10}, // upper right
+		{Row: -10, Col: 10}, // lower right
 
-		{Row: 20, Col: -10},
-		{Row: 10, Col: -10},
+		{Row: 20, Col: -10}, // lower left
+		{Row: 10, Col: -10}, // upper left
 	}
 
 	tess, err := pattern.New(mask, translations)
@@ -95,6 +95,18 @@ func main() {
 		return
 	}
 
+	// these additional translations are used to tile the entire GIF frame
+	translations = append(translations,
+		pattern.Offset{Row: -20},
+		pattern.Offset{Row: 20},
+
+		pattern.Offset{Row: 0, Col: -10},
+		pattern.Offset{Row: 0, Col: 10},
+
+		pattern.Offset{Row: -10, Col: -10},
+		pattern.Offset{Row: 10, Col: 10},
+	)
+
 	// number of frames to calculate (0.gif not included)
 	nFrames := 42
 
@@ -102,7 +114,7 @@ func main() {
 
 	// save initial frame (the frames directory must already exist)
 	names[0] = "frames/0.gif"
-	saveGIFFrame(tess, aTile, names[0])
+	saveGIFFrame(tess, translations, aTile, names[0])
 
 	for i, j := 1, 2; j <= nFrames; i, j = i+2, j+2 {
 		// the tile is evolved twice each iteration
@@ -110,11 +122,11 @@ func main() {
 
 		tess.Evolve(aTile, bTile)
 		names[i] = fmt.Sprintf("frames/%d.gif", i)
-		saveGIFFrame(tess, bTile, names[i])
+		saveGIFFrame(tess, translations, bTile, names[i])
 
 		tess.Evolve(bTile, aTile)
 		names[j] = fmt.Sprintf("frames/%d.gif", j)
-		saveGIFFrame(tess, aTile, names[j])
+		saveGIFFrame(tess, translations, aTile, names[j])
 	}
 
 	composeGIF(names, "evolution.gif")
@@ -134,7 +146,7 @@ func readCSV(name string) [][]string {
 	return records
 }
 
-func saveGIFFrame(t *pattern.Pattern, tile [][]bool, name string) {
+func saveGIFFrame(t *pattern.Pattern, rules []pattern.Offset, tile [][]bool, name string) {
 	// create masks for painting cells
 	// these are colored solid and masked with a circle
 	onSrc := &image.Uniform{on}
@@ -146,26 +158,31 @@ func saveGIFFrame(t *pattern.Pattern, tile [][]bool, name string) {
 	// set background color
 	draw.Draw(img, img.Bounds(), &image.Uniform{background}, image.ZP, draw.Src)
 
+	rules = append(rules, pattern.Offset{Row: 0, Col: 0})
+
 	for _, cell := range t.Cells[1:] {
 
-		cellRegion := image.Rectangle{
-			image.Point{cell.Col * 10, cell.Row * 10},
-			image.Point{cell.Col*10 + 10, cell.Row*10 + 10},
+		for _, rule := range rules {
+
+			cellRegion := image.Rectangle{
+				image.Point{(cell.Col + rule.Col) * 10, (cell.Row + rule.Row) * 10},
+				image.Point{(cell.Col+rule.Col)*10 + 10, (cell.Row+rule.Row)*10 + 10},
+			}
+
+			center := image.Point{(cell.Col+rule.Col)*10 + 5, (cell.Row+rule.Row)*10 + 5}
+
+			var src *image.Uniform
+
+			if tile[cell.Row][cell.Col] {
+				src = onSrc
+			} else {
+				src = offSrc
+			}
+
+			// 4 is one less than 5, the radius of the square
+			dot := &Circle{P: center, R: 4}
+			draw.DrawMask(img, cellRegion, src, image.ZP, dot, dot.Bounds().Min, draw.Over)
 		}
-
-		center := image.Point{cell.Col*10 + 5, cell.Row*10 + 5}
-
-		var src *image.Uniform
-
-		if tile[cell.Row][cell.Col] {
-			src = onSrc
-		} else {
-			src = offSrc
-		}
-
-		// 4 is one less than 5, the radius of the square
-		dot := &Circle{P: center, R: 4}
-		draw.DrawMask(img, cellRegion, src, image.ZP, dot, dot.Bounds().Min, draw.Over)
 	}
 
 	f, _ := os.OpenFile(name, os.O_WRONLY|os.O_CREATE, 0600)
