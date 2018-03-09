@@ -37,9 +37,7 @@ func (c *Circle) ColorModel() color.Model {
 
 // Bounds returns bounds of circle; implements Image interface.
 func (c *Circle) Bounds() image.Rectangle {
-	// 5 is a magic number... the radius of a 10x10 square
-	// return image.Rect(c.p.X-c.r, c.p.Y-c.r, c.p.X+c.r, c.p.Y+c.r)
-	return image.Rect(c.P.X-5, c.P.Y-5, c.P.X+5, c.P.Y+5)
+	return image.Rect(c.P.X-c.R, c.P.Y-c.R, c.P.X+c.R, c.P.Y+c.R)
 }
 
 // At finds if (x, y) is in the circle or not.
@@ -143,6 +141,7 @@ func saveGIFFrame(t *pattern.Pattern, tile [][]bool, name string) {
 	offSrc := &image.Uniform{off}
 
 	// I am visualizing the grid per the docs, so x=cols and y=rows
+	// each cell is getting a 10x10 square
 	img := image.NewPaletted(image.Rect(0, 0, 10*t.Cols(), 10*t.Rows()), palette)
 	// set background color
 	draw.Draw(img, img.Bounds(), &image.Uniform{background}, image.ZP, draw.Src)
@@ -165,7 +164,6 @@ func saveGIFFrame(t *pattern.Pattern, tile [][]bool, name string) {
 		}
 
 		// 4 is one less than 5, the radius of the square
-		// TODO: move circle instead of hardcoding 5 in Circle#Bounds()
 		dot := &Circle{P: center, R: 4}
 		draw.DrawMask(img, cellRegion, src, image.ZP, dot, dot.Bounds().Min, draw.Over)
 	}
@@ -176,6 +174,7 @@ func saveGIFFrame(t *pattern.Pattern, tile [][]bool, name string) {
 }
 
 // http://tech.nitoyon.com/en/blog/2016/01/07/go-animated-gif-gen/
+// TODO: there's a better way... only draw the parts that have changed
 func composeGIF(frames []string, name string) {
 	outGIF := &gif.GIF{}
 	for _, file := range frames {
