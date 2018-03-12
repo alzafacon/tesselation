@@ -108,7 +108,7 @@ func main() {
 	)
 
 	// number of frames to calculate (0.gif not included)
-	nFrames := 42
+	nFrames := 42 // found by trial and error...
 
 	names := make([]string, nFrames+1)
 
@@ -134,6 +134,9 @@ func main() {
 
 func readCSV(name string) [][]string {
 	fileReader, err := os.Open(name)
+	if err != nil {
+		log.Fatal(err)
+	}
 	r := csv.NewReader(fileReader)
 
 	records, err := r.ReadAll()
@@ -161,15 +164,13 @@ func saveGIFFrame(t *pattern.Pattern, rules []pattern.Offset, tile [][]bool, nam
 	rules = append(rules, pattern.Offset{Row: 0, Col: 0})
 
 	for _, cell := range t.Cells[1:] {
-
 		for _, rule := range rules {
+			offsetCol, offsetRow := cell.Col+rule.Col, cell.Row+rule.Row
 
-			cellRegion := image.Rectangle{
-				image.Point{(cell.Col + rule.Col) * 10, (cell.Row + rule.Row) * 10},
-				image.Point{(cell.Col+rule.Col)*10 + 10, (cell.Row+rule.Row)*10 + 10},
-			}
-
-			center := image.Point{(cell.Col+rule.Col)*10 + 5, (cell.Row+rule.Row)*10 + 5}
+			cellRegion := image.Rect(
+				offsetCol*10, offsetRow*10,
+				offsetCol*10+10, offsetRow*10+10,
+			).Add(image.Point{1, 1}) // shift by +1,+1 to center dots
 
 			var src *image.Uniform
 
@@ -180,13 +181,13 @@ func saveGIFFrame(t *pattern.Pattern, rules []pattern.Offset, tile [][]bool, nam
 			}
 
 			// 4 is one less than 5, the radius of the square
-			dot := &Circle{P: center, R: 4}
+			dot := &Circle{R: 4} // center doesn't matter since shape gets aligned to cellRegion
 			draw.DrawMask(img, cellRegion, src, image.ZP, dot, dot.Bounds().Min, draw.Over)
 		}
 	}
 
 	f, _ := os.OpenFile(name, os.O_WRONLY|os.O_CREATE, 0600)
-	defer f.Close()
+	defer f.Close() // why defer instead of closing after encoding
 	gif.Encode(f, img, nil)
 }
 
