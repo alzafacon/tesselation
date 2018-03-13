@@ -1,3 +1,4 @@
+// Package tessellation TODO
 package main
 
 import (
@@ -11,6 +12,11 @@ import (
 	"os"
 
 	"github.com/fidelcoria/tessellation/pattern"
+)
+
+const (
+	maskFile = "data/mask.csv"
+	tileFile = "data/tile.csv"
 )
 
 // GIF colors
@@ -50,7 +56,7 @@ func (c *Circle) At(x, y int) color.Color {
 }
 
 func main() {
-	maskData := readCSV("data/tile mask.csv")
+	maskData := readCSV(maskFile)
 	mask := make([][]bool, len(maskData))
 	for i, record := range maskData {
 		mask[i] = make([]bool, len(record))
@@ -61,7 +67,7 @@ func main() {
 		}
 	}
 
-	tileData := readCSV("data/tile.csv")
+	tileData := readCSV(tileFile)
 	aTile := make([][]bool, len(tileData))
 	for i, record := range tileData {
 		aTile[i] = make([]bool, len(record))
@@ -72,21 +78,16 @@ func main() {
 		}
 	}
 
-	bTile := make([][]bool, len(aTile))
-	for i := range bTile {
-		bTile[i] = make([]bool, len(aTile[0]))
-	}
-
-	// translations are the rules used to slide the tile and tessellate all around the first tile
+	// for bordering TODO read from file, maybe?
 	translations := []pattern.Offset{
-		{Row: -10}, // above
-		{Row: 10},  // below
-
-		{Row: -20, Col: 10}, // upper right
-		{Row: -10, Col: 10}, // lower right
-
-		{Row: 20, Col: -10}, // lower left
-		{Row: 10, Col: -10}, // upper left
+		{Row: -10, Col: -10},
+		{Row: -10, Col: 0},
+		{Row: -10, Col: 10},
+		{Row: 0, Col: -10},
+		{Row: 0, Col: 10},
+		{Row: 10, Col: -10},
+		{Row: 10, Col: 0},
+		{Row: 10, Col: 10},
 	}
 
 	tess, err := pattern.New(mask, translations)
@@ -97,41 +98,57 @@ func main() {
 
 	// these additional translations are used to tile the entire GIF frame
 	translations = append(translations,
-		pattern.Offset{Row: -20},
-		pattern.Offset{Row: 20},
+		pattern.Offset{Row: 20, Col: -10},
+		pattern.Offset{Row: 20, Col: 0},
+		pattern.Offset{Row: 20, Col: 10},
+		pattern.Offset{Row: 20, Col: 20},
 
-		pattern.Offset{Row: 0, Col: -10},
-		pattern.Offset{Row: 0, Col: 10},
-
-		pattern.Offset{Row: -10, Col: -10},
-		pattern.Offset{Row: 10, Col: 10},
+		pattern.Offset{Row: -10, Col: 20},
+		pattern.Offset{Row: 0, Col: 20},
+		pattern.Offset{Row: 10, Col: 20},
 	)
-
 	// number of frames to calculate (0.gif not included)
 	nFrames := 42 // found by trial and error...
+
+	play(tess, aTile, translations, 2, 2, nFrames)
+}
+
+// play runs the simulation and creates the GIFs
+// pat has information about the tile pattern
+// aTile is the original (first generation) tile
+// shifts indicate how to shift tile to tessellate the GIF frame
+// nFrames is the number of generations to calculate
+func play(pat *pattern.Pattern, aTile [][]bool, shifts []pattern.Offset, repH, repV int, nFrames int) {
+
+	bTile := make([][]bool, len(aTile))
+	for i := range bTile {
+		bTile[i] = make([]bool, len(aTile[0]))
+	}
 
 	names := make([]string, nFrames+1)
 
 	// save initial frame (the frames directory must already exist)
 	names[0] = "frames/0.gif"
-	saveGIFFrame(tess, translations, aTile, names[0])
+	saveGIFFrame(pat, shifts, repH, repV, aTile, names[0])
 
 	for i, j := 1, 2; j <= nFrames; i, j = i+2, j+2 {
 		// the tile is evolved twice each iteration
 		// this avoids having to allocate new arrays
 
-		tess.Evolve(aTile, bTile)
+		pat.Evolve(aTile, bTile)
 		names[i] = fmt.Sprintf("frames/%d.gif", i)
-		saveGIFFrame(tess, translations, bTile, names[i])
+		saveGIFFrame(pat, shifts, repH, repV, bTile, names[i])
 
-		tess.Evolve(bTile, aTile)
+		pat.Evolve(bTile, aTile)
 		names[j] = fmt.Sprintf("frames/%d.gif", j)
-		saveGIFFrame(tess, translations, aTile, names[j])
+		saveGIFFrame(pat, shifts, repH, repV, aTile, names[j])
 	}
 
 	composeGIF(names, "evolution.gif")
 }
 
+// readCSV wraps boiler plate code for reading a CSV.
+// name is the name of the csv file
 func readCSV(name string) [][]string {
 	fileReader, err := os.Open(name)
 	if err != nil {
@@ -144,33 +161,43 @@ func readCSV(name string) [][]string {
 		log.Fatal(err)
 	}
 
-	fileReader.Close()
+	fileReader.Close() // why not defer like for GIFs
 
 	return records
 }
 
-func saveGIFFrame(t *pattern.Pattern, rules []pattern.Offset, tile [][]bool, name string) {
+// saveGIFFrame saves a GIF of the tile passed.
+// pat has information about the tile pattern
+// shifts are offsets for tiling the GIF frame
+// repH, for size of GIF, counts how many times to repeat horizontally
+// repV, for size of GIF, counts how many times to repeat vertically
+// tile contains shape of pattern
+// name is name of output GIF
+func saveGIFFrame(pat *pattern.Pattern, shifts []pattern.Offset, repH, repV int, tile [][]bool, name string) {
 	// create masks for painting cells
 	// these are colored solid and masked with a circle
 	onSrc := &image.Uniform{on}
 	offSrc := &image.Uniform{off}
 
+	// each cell (dot) is in a square of size squarePix
+	squarePix := 10
+
 	// I am visualizing the grid per the docs, so x=cols and y=rows
 	// each cell is getting a 10x10 square
-	img := image.NewPaletted(image.Rect(0, 0, 10*t.Cols(), 10*t.Rows()), palette)
+	img := image.NewPaletted(image.Rect(0, 0, squarePix*pat.Cols()*repH, squarePix*pat.Rows()*repV), palette)
 	// set background color
 	draw.Draw(img, img.Bounds(), &image.Uniform{background}, image.ZP, draw.Src)
 
-	rules = append(rules, pattern.Offset{Row: 0, Col: 0})
+	shifts = append(shifts, pattern.Offset{Row: 0, Col: 0})
 
-	for _, cell := range t.Cells[1:] {
-		for _, rule := range rules {
+	for _, cell := range pat.Cells {
+		for _, rule := range shifts {
 			offsetCol, offsetRow := cell.Col+rule.Col, cell.Row+rule.Row
 
 			cellRegion := image.Rect(
-				offsetCol*10, offsetRow*10,
-				offsetCol*10+10, offsetRow*10+10,
-			).Add(image.Point{1, 1}) // shift by +1,+1 to center dots
+				offsetCol*squarePix, offsetRow*squarePix,
+				offsetCol*squarePix+squarePix, offsetRow*squarePix+squarePix,
+			)
 
 			var src *image.Uniform
 
@@ -182,7 +209,11 @@ func saveGIFFrame(t *pattern.Pattern, rules []pattern.Offset, tile [][]bool, nam
 
 			// 4 is one less than 5, the radius of the square
 			dot := &Circle{R: 4} // center doesn't matter since shape gets aligned to cellRegion
-			draw.DrawMask(img, cellRegion, src, image.ZP, dot, dot.Bounds().Min, draw.Over)
+			draw.DrawMask(img, cellRegion,
+				src, image.ZP,
+				dot, dot.Bounds().Min.Add(image.Point{-1, -1}), // shift by -1,-1 to center dots
+				draw.Over,
+			)
 		}
 	}
 
@@ -191,8 +222,12 @@ func saveGIFFrame(t *pattern.Pattern, rules []pattern.Offset, tile [][]bool, nam
 	gif.Encode(f, img, nil)
 }
 
-// http://tech.nitoyon.com/en/blog/2016/01/07/go-animated-gif-gen/
+// composeGIF composes a group of GIF images into a single one.
+// frames is a slice with the names of the GIFs to compose
+// name is the name of the final GIF
+// credits: http://tech.nitoyon.com/en/blog/2016/01/07/go-animated-gif-gen/
 // TODO: there's a better way... only draw the parts that have changed
+//			that would require decoupling play, saveGIFFrame and composeGIF
 func composeGIF(frames []string, name string) {
 	outGIF := &gif.GIF{}
 	for _, file := range frames {
@@ -209,6 +244,7 @@ func composeGIF(frames []string, name string) {
 	gif.EncodeAll(f, outGIF)
 }
 
+// tilePrint is convenient for printing the tile to console.
 func tilePrint(g [][]bool) {
 	for _, record := range g {
 		for _, field := range record {

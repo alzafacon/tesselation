@@ -33,3 +33,6 @@ Finding the cell id that corresponds to each of the border cells around the tile
 
 ![surrounded tile](docs/border.PNG)
 
+#### Improvement
+
+Since there are 100=10*10 cells in the pattern I thought it might be possible to tile with a square. Based on the evolution of the pattern I noticed that there was a very rectangular pattern showing up. So I modified the tile boundaries above and made a square. Using a square is more convenient because it is easier to determine the translation rules. 
