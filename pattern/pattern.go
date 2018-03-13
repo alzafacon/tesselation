@@ -18,24 +18,27 @@ type Pattern struct {
 	// rows and cols are dimensions of rectangular array containing tile.
 	rows, cols int
 
-	// mask stores the cell id's.
-	// A value of zero represents the cell is not part of the tile.
+	// mask stores the cell IDs.
+	// A value of zero means the cell is not part of the tile.
 	// This can be used to determine whether a cell is in the tile or not.
 	mask [][]int
 
-	// Cells is an array of cell coordinates indexed by cell id.
+	// Cells is an map of cell coordinates indexed by cell id.
 	// These coordinates correspond the the cells that are part of the tile.
 	// Cells that are in the array but are not part of the tile are excluded.
 	// Note: Cells is reverse index to mask.
-	Cells []Cell
+	Cells map[int]Cell
 
 	// Border is a map indexed by cell id to a slice of cell coordinates.
 	// These coordinates are used to fill in the Border around a tile.
+	// This makes it possible to simulate the tessellation correctly!
 	Border map[int][]Cell
 }
 
-const alive = true
-const dead = false
+const (
+	alive = true
+	dead  = false
+)
 
 // New makes a tile based on a tile mask and rules for tesselating.
 // The mask says which cells are in the tile. Must be rectangular. All cells on edge must be false.
@@ -47,6 +50,12 @@ func New(mask [][]bool, rules []Offset) (*Pattern, error) {
 	t.rows = len(mask)
 	t.cols = len(mask[0])
 
+	for _, row := range mask {
+		if len(row) != t.cols {
+			return nil, fmt.Errorf("New: pattern: mask is not rectangular")
+		}
+	}
+
 	// allocate t.mask
 	t.mask = make([][]int, t.rows)
 	underlying := make([]int, t.rows*t.cols)
@@ -55,7 +64,7 @@ func New(mask [][]bool, rules []Offset) (*Pattern, error) {
 	}
 
 	// allocate t.Cells
-	t.Cells = make([]Cell, 1) // "append" n times, up to needed size (amortized O(1))
+	t.Cells = make(map[int]Cell)
 
 	// Assign each cell in the tile an id.
 	// also fill t.Cells
@@ -65,14 +74,14 @@ func New(mask [][]bool, rules []Offset) (*Pattern, error) {
 			if cell == alive {
 				id++
 				t.mask[i][j] = id
-				t.Cells = append(t.Cells, Cell{i, j})
+				t.Cells[id] = Cell{i, j}
 			}
 		}
 	}
 
 	// Calculate Border by tessellating
 
-	// Apply rules. Each rule creates a new copy of the tile.
+	// Apply rules. Each rule "creates" a new copy of the tile.
 	t.Border = make(map[int][]Cell)
 	for _, rule := range rules {
 		for id, c := range t.Cells {
@@ -83,13 +92,12 @@ func New(mask [][]bool, rules []Offset) (*Pattern, error) {
 			if (0 <= row && row < t.rows) && (0 <= col && col < t.cols) {
 				// we assumed that the rules correctly tesselate the plane
 				// here we just double check that the tiled copy is not causing overlap
-				if mask[row][col] == dead {
-					// check that the cell is neighbor to tile
-					if countNeighbors(mask, row, col) > 0 {
-						t.Border[id] = append(t.Border[id], Cell{row, col})
-					}
-				} else {
+				if mask[row][col] {
 					return nil, fmt.Errorf("rule %v caused overlap r:%v c:%v, id:%v", rule, row, col, id)
+				}
+				// check that the cell is neighbor to tile (and hence on border)
+				if countNeighbors(mask, row, col) > 0 {
+					t.Border[id] = append(t.Border[id], Cell{row, col})
 				}
 			}
 		}
@@ -113,6 +121,7 @@ func (t *Pattern) Cols() int {
 func (t *Pattern) Evolve(tile [][]bool, newTile [][]bool) {
 
 	// fill in the border around tile
+	// this is needed so the next generation is correct
 	for id, v := range t.Border {
 		tc := t.Cells[id] // find tile cell (tc) by id
 		// each border cell (bc) with the above id gets the value at tc
@@ -121,15 +130,14 @@ func (t *Pattern) Evolve(tile [][]bool, newTile [][]bool) {
 		}
 	}
 
-	// cell id starts at 1, hence slice from 1
-	for _, c := range t.Cells[1:] {
+	for _, c := range t.Cells {
 		newTile[c.Row][c.Col] = evolveCell(tile, c.Row, c.Col)
 	}
 }
 
 // evolveCell applies Conway's rules to find new state of cell
 func evolveCell(tile [][]bool, row, col int) bool {
-	// require (row, col) in range of tile mask
+	// TODO check (row, col) in range of tile mask
 
 	currentState := tile[row][col]
 	liveNeighbors := countNeighbors(tile, row, col)
